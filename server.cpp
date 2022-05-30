@@ -39,7 +39,6 @@ int main() {
 
 void process(int listenfd, int conn, bool* flag) {
 	char bufRecv[5];
-	char buf[255];
 	memset(bufRecv, 0, sizeof(bufRecv));
 	int len = recv(conn, bufRecv, sizeof(bufRecv), 0);
 	if (len <= 0) {
@@ -50,5 +49,7 @@ void process(int listenfd, int conn, bool* flag) {
 	bufRecv[len] = '\0';
 	int id = atoi(bufRecv);
 	IUserServer* one = new UserServerImpl();
-	one->findUserById(id);
+	User a = one->findUserById(id);
+	string name = a.getNmae();
+	send(conn, name.c_str(), name.size(), 0); 
 }
