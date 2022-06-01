@@ -2,15 +2,43 @@ package main
 
 import (
 	"bytes"
+	"common"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
-	"common"
 )
 
 func main() {
-	findUserById(123)
+	var id int
+	fmt.Println("输入用户id")
+	fmt.Scanln(&id)
+	userTransfer(id)
+}
+
+func userTransfer(id int) {
+	conn, err := net.Dial("tcp", "127.0.0.1:7020")
+	if err != nil {
+		fmt.Println("dial error")
+	}
+	defer conn.Close()
+	user := &common.User{
+		Id: id,
+		Name: "",
+	}
+	userJson, err := json.Marshal(user)
+	_, err = conn.Write(userJson)
+	if err != nil {
+		fmt.Println("write error")
+	}
+	buf := make([]byte, 1024)
+	num, err := conn.Read(buf)
+	var recvUser common.User
+	if err := json.Unmarshal(buf[:num], &recvUser); err != nil {
+		fmt.Println("json Unmarshal error")
+	}
+	fmt.Println(recvUser.ToString())
 }
 
 func findUserById(id int) common.User {
