@@ -6,26 +6,11 @@ import (
 	"log"
 	"net"
 	"reflect"
+	"sync"
 )
 
 func NewServer() *Server{
 	return &Server{}
-}
-
-func (this *Server) start() {
-	listen, err := net.Listen("tcp", "127.0.0.1:7020")
-	this.l = listen
-	if err != nil {
-		fmt.Println("listen error")
-	}
-	defer listen.Close()
-	for {
-		conn, err := listen.Accept()
-		if err != nil {
-			fmt.Println("accept error")
-		}
-		go this.process(conn)
-	}
 }
 
 func (this *Server) register(recv interface{}) {
@@ -38,7 +23,7 @@ func (this *Server) register(recv interface{}) {
 	}
 	s.name = sname
 	s.methodMap = methodMapBuild(s.recvT)
-	this.serverMap[s.name] = s
+	this.serverMap.LoadOrStore(s.name, s)
 }
 
 func methodMapBuild(recvT reflect.Type) map[string]*methodType {
@@ -61,41 +46,70 @@ func methodMapBuild(recvT reflect.Type) map[string]*methodType {
 }
 
 
-func (this *Server) stop() {
-	this.l.Close()
-}
-
-
 func (this *Server) process(conn net.Conn) {
 	defer conn.Close()
-	messageJson := make([]byte, 1024)
-	num, err := conn.Read(messageJson)
-	if err != nil {
-		return
+	send := new(sync.Mutex)
+	wg := new(sync.WaitGroup)
+	this.reqLock.Lock()
+	this.req = new(Request)
+	this.reqLock.Unlock()
+
+	this.readRequest(conn, this.req)
+	s1, _ := this.serverMap.Load(this.req.MethodName)
+	s, ok := s1.(*service)
+	if !ok {
+		fmt.Println("the service is not exist")
+		return 
 	}
-	var req Request
-	err = json.Unmarshal(messageJson[:num], &req)
-	if err != nil {
-		fmt.Println("json unmarshal error")
-	}
-	s := this.serverMap[req.ServiceName]
-	meth := s.methodMap[req.MethodName]
-	function := meth.method.Func
-	var argv reflect.Value
+	meth := s.methodMap[this.req.MethodName]
 	// inputParams may be not one, so if inputParams are not noe, ArgT is Pointer
+	var argv reflect.Value
 	if meth.ArgT.Kind() == reflect.Pointer {
 		argv = reflect.New(meth.ArgT.Elem())
 	} else {
 		argv = reflect.New(meth.ArgT)
 	}
 	retv := reflect.New(meth.RetT.Elem())
-	// reflect.Method.Func {params[0]: struct self, params[1]:input params, params[2]:output params}
-	function.Call([]reflect.Value{s.recvV, argv, retv})
-	rsp := &Response{
-		Ret: retv.Interface(),
+
+	s.call(this, send, wg, meth, argv, retv)
+
+	this.rspLock.Lock()
+	this.rsp = new(Response)
+	this.reqLock.Unlock()
+
+	this.sendResponse(conn, this.rsp, retv)
+	
+	wg.Wait()
+	conn.Close()
+}
+
+func (this *service) call(s *Server, send *sync.Mutex, wg *sync.WaitGroup, meth *methodType, argv reflect.Value, retv reflect.Value) {
+	if wg != nil {
+		defer wg.Done()
 	}
+	meth.Lock()
+	meth.numCalls++
+	meth.Unlock()
+	function := meth.method.Func
+	// reflect.Method.Func {params[0]: struct self, params[1]:input params, params[2]:output params}
+	function.Call([]reflect.Value{this.recvV, argv, retv})
+}
+
+func (this *Server) readRequest(conn net.Conn, req *Request) {
+	messageJson := make([]byte, 1024)
+	num, err := conn.Read(messageJson)
+	if err != nil {
+		return 
+	}
+	err = json.Unmarshal(messageJson[:num], req)
+	if err != nil {
+		fmt.Println("json unmarshal error")
+	}
+}
+
+func (this *Server) sendResponse(conn net.Conn, rsp *Response, retv interface{}) {
 	rspJson, _ := json.Marshal(rsp)
-	_, err = conn.Write(rspJson)
+	_, err := conn.Write(rspJson)
 	if err != nil {
 		fmt.Println("ret send error")
 	}

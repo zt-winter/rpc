@@ -1,8 +1,8 @@
 package rpc
 
 import (
-	"net"
 	"reflect"
+	"sync"
 )
 
 type Request struct {
@@ -12,6 +12,8 @@ type Request struct {
 }
 
 type methodType struct {
+	sync.Mutex
+	numCalls int
 	method reflect.Method
 	ArgT reflect.Type
 	RetT reflect.Type
@@ -25,8 +27,12 @@ type service struct {
 }
 
 type Server struct {
-	l net.Listener
-	serverMap map[string]*service
+	//serverMap map[string]*service
+	serverMap sync.Map
+	reqLock sync.Mutex
+	req *Request
+	rspLock sync.Mutex
+	rsp *Response
 }
 
 
